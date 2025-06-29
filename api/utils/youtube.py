@@ -3,118 +3,98 @@ import re
 import logging
 from typing import Optional
 from models.schemas import VideoMetadata
-from datetime import datetime, timedelta
+from datetime import datetime
 import os
 
 logger = logging.getLogger(__name__)
 
-class YouTubeUtils:
-    """
-    Utility class for YouTube-related operations.
-    """
-    
-    def __init__(self):
-        self.youtube_api_key = os.getenv("YOUTUBE_API_KEY")
-        self.base_url = "https://www.googleapis.com/youtube/v3"
-        
-    def extract_video_id(self, youtube_url: str) -> Optional[str]:
-        """
-        Extract video ID from YouTube URL.
-        """
-        patterns = [
-            r'(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)',
-            r'youtube\.com\/watch\?.*v=([^&\n?#]+)',
-        ]
-        
-        for pattern in patterns:
-            match = re.search(pattern, youtube_url)
-            if match:
-                return match.group(1)
-        
+# Menggunakan konstanta di level modul untuk menghindari masalah state
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+BASE_URL = "https://www.googleapis.com/youtube/v3"
+
+def extract_video_id(youtube_url: str) -> Optional[str]:
+    """Mengekstrak ID video dari URL YouTube."""
+    if not isinstance(youtube_url, str):
         return None
     
-    async def get_video_metadata(self, youtube_url: str) -> Optional[VideoMetadata]:
-        """
-        Get video metadata from YouTube API.
-        """
-        video_id = self.extract_video_id(youtube_url)
-        if not video_id:
-            logger.error(f"Invalid YouTube URL: {youtube_url}")
-            return None
-        
-        logger.info(f"Getting metadata for video ID: {video_id}")
-        
-        if not self.youtube_api_key:
-            logger.error("YOUTUBE_API_KEY environment variable not set.")
-            raise Exception("YouTube API key is not configured on the server.")
-        
-        try:
-            return await self._fetch_from_youtube_api(video_id)
-        except Exception as e:
-            logger.error(f"Error getting video metadata: {str(e)}")
-            return None
-    
-    async def _fetch_from_youtube_api(self, video_id: str) -> Optional[VideoMetadata]:
-        """
-        Fetch video metadata from YouTube Data API v3.
-        """
-        async with httpx.AsyncClient() as client:
-            url = f"{self.base_url}/videos"
-            params = {
-                "part": "snippet,statistics,contentDetails",
-                "id": video_id,
-                "key": self.youtube_api_key
-            }
-            
-            response = await client.get(url, params=params)
-            response.raise_for_status()
-            
-            data = response.json()
-            if not data.get("items"):
-                logger.warning(f"No video data found for ID: {video_id}")
-                return None
-            
-            item = data["items"][0]
-            snippet = item["snippet"]
-            statistics = item.get("statistics", {})
-            content_details = item["contentDetails"]
-            
-            duration_seconds = self._parse_duration(content_details.get("duration", "PT0S"))
-            
-            return VideoMetadata(
-                title=snippet.get("title", "No Title"),
-                duration=duration_seconds,
-                thumbnail_url=snippet.get("thumbnails", {}).get("high", {}).get("url"),
-                channel_name=snippet.get("channelTitle", "Unknown Channel"),
-                view_count=int(statistics.get("viewCount", 0)),
-                like_count=int(statistics.get("likeCount", 0)),
-                published_at=datetime.fromisoformat(snippet["publishedAt"].replace("Z", "+00:00")),
-                description=snippet.get("description", "")
-            )
-    
-    def _parse_duration(self, duration_str: str) -> int:
-        """
-        Parse ISO 8601 duration string to seconds. (e.g., "PT1H2M3S" -> 3723)
-        """
-        if not duration_str.startswith('PT'):
-            return 0
-            
-        duration_str = duration_str[2:]
-        total_seconds = 0
-        
-        time_matches = re.match(r'(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?', duration_str)
-        if not time_matches:
-            return 0
+    patterns = [
+        r'(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)',
+        r'youtube\.com\/watch\?.*v=([^&\n?#]+)',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, youtube_url)
+        if match:
+            # Mengembalikan grup pertama yang cocok (ID video)
+            return match.group(1)
+    return None
 
-        hours = int(time_matches.group(1)) if time_matches.group(1) else 0
-        minutes = int(time_matches.group(2)) if time_matches.group(2) else 0
-        seconds = int(time_matches.group(3)) if time_matches.group(3) else 0
-        
-        total_seconds = hours * 3600 + minutes * 60 + seconds
-        return total_seconds
+def _parse_duration(duration_str: str) -> int:
+    """Mengurai durasi ISO 8601 menjadi detik."""
+    if not duration_str or not duration_str.startswith('PT'):
+        return 0
     
-    def is_valid_youtube_url(self, url: str) -> bool:
-        """
-        Check if URL is a valid YouTube URL.
-        """
-        return self.extract_video_id(url) is not None
+    duration_str = duration_str[2:]
+    total_seconds = 0
+    time_matches = re.match(r'(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?', duration_str)
+    
+    if not time_matches:
+        return 0
+        
+    hours, minutes, seconds = time_matches.groups()
+    total_seconds += int(hours) * 3600 if hours else 0
+    total_seconds += int(minutes) * 60 if minutes else 0
+    total_seconds += int(seconds) if seconds else 0
+    return total_seconds
+
+async def get_video_metadata(youtube_url: str) -> Optional[VideoMetadata]:
+    """Mengambil metadata video dari YouTube API."""
+    video_id = extract_video_id(youtube_url)
+    if not video_id:
+        logger.error(f"URL YouTube tidak valid atau ID video tidak dapat diekstrak: {youtube_url}")
+        return None
+
+    if not YOUTUBE_API_KEY:
+        logger.error("Variabel lingkungan YOUTUBE_API_KEY tidak diatur.")
+        raise Exception("Kunci API YouTube tidak dikonfigurasi di server.")
+
+    # URL dan parameter untuk permintaan API
+    api_url = f"{BASE_URL}/videos"
+    params = {
+        "part": "snippet,statistics,contentDetails",
+        "id": video_id,
+        "key": YOUTUBE_API_KEY
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            logger.info(f"Mengambil metadata dari URL: {api_url} untuk video_id: {video_id}")
+            response = await client.get(api_url, params=params)
+            response.raise_for_status()  # Akan raise exception untuk status 4xx/5xx
+            data = response.json()
+    except httpx.RequestError as e:
+        logger.error(f"Permintaan HTTP gagal saat mengambil metadata video: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Terjadi kesalahan tak terduga saat mengambil metadata video: {e}")
+        return None
+
+    if not data.get("items"):
+        logger.warning(f"Tidak ada data video yang ditemukan untuk ID: {video_id}")
+        return None
+
+    # Ekstrak data dari respons JSON
+    item = data["items"][0]
+    snippet = item.get("snippet", {})
+    statistics = item.get("statistics", {})
+    content_details = item.get("contentDetails", {})
+
+    return VideoMetadata(
+        title=snippet.get("title", "No Title"),
+        duration=_parse_duration(content_details.get("duration")),
+        thumbnail_url=snippet.get("thumbnails", {}).get("high", {}).get("url"),
+        channel_name=snippet.get("channelTitle", "Unknown Channel"),
+        view_count=int(statistics.get("viewCount", 0)),
+        like_count=int(statistics.get("likeCount", 0)),
+        published_at=datetime.fromisoformat(snippet["publishedAt"].replace("Z", "+00:00")) if "publishedAt" in snippet else None,
+        description=snippet.get("description", "")
+    )
