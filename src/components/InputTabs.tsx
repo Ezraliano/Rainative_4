@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { FileUp, Youtube, Sparkles, ArrowLeft, Play, Clock, TrendingUp, Lightbulb, Target, Users, Zap, ChevronDown, ChevronUp } from 'lucide-react';
+import { FileUp, Youtube, Sparkles, ArrowLeft, Play, Clock, TrendingUp, Lightbulb, Target, Users, Zap, ChevronDown, ChevronUp, Upload, X } from 'lucide-react';
 
 interface SummaryState {
   isLoading: boolean;
@@ -13,7 +13,7 @@ interface TimelineItem {
 }
 
 interface AnalysisData {
-  video_metadata: {
+  video_metadata?: {
     title: string;
     duration: number;
     thumbnail_url: string;
@@ -39,6 +39,7 @@ interface AnalysisData {
     pro_tips: string[];
     estimated_viral_score: number;
   };
+  doc_summary?: string;
 }
 
 const InputTabs: React.FC = () => {
@@ -51,8 +52,42 @@ const InputTabs: React.FC = () => {
   });
   const [expandedTimeline, setExpandedTimeline] = useState<number[]>([0]);
   const [youtubeUrl, setYoutubeUrl] = useState('');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [analysisData, setAnalysisData] = useState<AnalysisData | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      // Validate file type
+      const allowedTypes = [
+        'application/pdf',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.ms-powerpoint',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        'text/plain'
+      ];
+      
+      if (!allowedTypes.includes(file.type)) {
+        setError('Please select a valid file type (PDF, Word, PowerPoint, or Text)');
+        return;
+      }
+      
+      // Validate file size (max 10MB)
+      if (file.size > 10 * 1024 * 1024) {
+        setError('File size must be less than 10MB');
+        return;
+      }
+      
+      setSelectedFile(file);
+      setError(null);
+    }
+  };
+
+  const handleRemoveFile = () => {
+    setSelectedFile(null);
+  };
 
   const handleSubmit = async () => {
     if (activeTab === 'youtube' && !youtubeUrl.trim()) {
@@ -60,22 +95,41 @@ const InputTabs: React.FC = () => {
       return;
     }
 
+    if (activeTab === 'document' && !selectedFile) {
+      setError('Please select a document to upload');
+      return;
+    }
+
     setError(null);
     setSummaryState({ isLoading: true, showSummary: false, type: activeTab });
 
     try {
-      const response = await fetch('http://localhost:8000/api/analyze', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          youtube_url: youtubeUrl,
-        }),
-      });
+      let response;
+      
+      if (activeTab === 'youtube') {
+        response = await fetch('http://localhost:8000/api/analyze', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            youtube_url: youtubeUrl,
+          }),
+        });
+      } else {
+        // Document upload
+        const formData = new FormData();
+        formData.append('file', selectedFile!);
+        
+        response = await fetch('http://localhost:8000/api/analyze-document', {
+          method: 'POST',
+          body: formData,
+        });
+      }
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
       }
 
       const data: AnalysisData = await response.json();
@@ -83,7 +137,7 @@ const InputTabs: React.FC = () => {
       setSummaryState({ isLoading: false, showSummary: true, type: activeTab });
     } catch (err) {
       console.error('Analysis error:', err);
-      setError('Failed to analyze content. Please check your connection and try again.');
+      setError(err instanceof Error ? err.message : 'Failed to analyze content. Please check your connection and try again.');
       setSummaryState({ isLoading: false, showSummary: false, type: null });
     }
   };
@@ -113,6 +167,14 @@ const InputTabs: React.FC = () => {
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = seconds % 60;
     return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+  };
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
   if (summaryState.showSummary && analysisData) {
@@ -160,26 +222,43 @@ const InputTabs: React.FC = () => {
         <div className="bg-gray-900 rounded-2xl p-6 md:p-8 shadow-2xl">
           {activeSection === 'summarize' && (
             <div className="flex flex-col lg:flex-row gap-8">
+              {/* Content Preview */}
               <div className="w-full lg:w-2/5">
-                <div className="relative rounded-xl overflow-hidden shadow-lg">
-                  <img
-                    src={analysisData.video_metadata.thumbnail_url}
-                    alt="Video thumbnail"
-                    className="w-full aspect-video object-cover"
-                  />
-                  <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-40 hover:bg-opacity-30 transition-all duration-300">
-                    <Play className="w-16 h-16 text-white drop-shadow-lg" />
+                {analysisData.video_metadata ? (
+                  // YouTube Video Preview
+                  <>
+                    <div className="relative rounded-xl overflow-hidden shadow-lg">
+                      <img
+                        src={analysisData.video_metadata.thumbnail_url}
+                        alt="Video thumbnail"
+                        className="w-full aspect-video object-cover"
+                      />
+                      <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-40 hover:bg-opacity-30 transition-all duration-300">
+                        <Play className="w-16 h-16 text-white drop-shadow-lg" />
+                      </div>
+                      <div className="absolute bottom-4 right-4 bg-black bg-opacity-75 text-white px-2 py-1 rounded text-sm flex items-center">
+                        <Clock className="w-3 h-3 mr-1" />
+                        {formatDuration(analysisData.video_metadata.duration)}
+                      </div>
+                    </div>
+                    <h3 className="text-white mt-4 text-xl font-semibold">{analysisData.video_metadata.title}</h3>
+                    <p className="text-gray-400 mt-2 text-sm">
+                      {analysisData.video_metadata.channel_name}
+                      {analysisData.video_metadata.view_count && ` • ${analysisData.video_metadata.view_count.toLocaleString()} views`}
+                    </p>
+                  </>
+                ) : (
+                  // Document Preview
+                  <div className="bg-gray-800 rounded-xl p-8 border border-gray-700">
+                    <div className="flex items-center justify-center w-20 h-20 bg-gradient-to-r from-blue-500 to-cyan-500 rounded-2xl mx-auto mb-4">
+                      <FileUp className="w-10 h-10 text-white" />
+                    </div>
+                    <h3 className="text-white text-xl font-semibold text-center mb-2">Document Analysis</h3>
+                    <p className="text-gray-400 text-sm text-center">
+                      Content extracted and analyzed from uploaded document
+                    </p>
                   </div>
-                  <div className="absolute bottom-4 right-4 bg-black bg-opacity-75 text-white px-2 py-1 rounded text-sm flex items-center">
-                    <Clock className="w-3 h-3 mr-1" />
-                    {formatDuration(analysisData.video_metadata.duration)}
-                  </div>
-                </div>
-                <h3 className="text-white mt-4 text-xl font-semibold">{analysisData.video_metadata.title}</h3>
-                <p className="text-gray-400 mt-2 text-sm">
-                  {analysisData.video_metadata.channel_name}
-                  {analysisData.video_metadata.view_count && ` • ${analysisData.video_metadata.view_count.toLocaleString()} views`}
-                </p>
+                )}
               </div>
               
               <div className="w-full lg:w-3/5">
@@ -190,38 +269,40 @@ const InputTabs: React.FC = () => {
                   {analysisData.summary}
                 </p>
                 
-                {/* Timeline Summary */}
-                <div className="mb-8">
-                  <h3 className="text-2xl font-semibold text-white mb-6 flex items-center">
-                    <Clock className="w-6 h-6 mr-3 text-cyan-400" />
-                    Timeline Summary
-                  </h3>
-                  <div className="space-y-4">
-                    {analysisData.timeline_summary.map((item, index) => (
-                      <div key={index} className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
-                        <button
-                          onClick={() => toggleTimeline(index)}
-                          className="w-full px-6 py-4 text-left flex items-center justify-between hover:bg-gray-750 transition-colors duration-200"
-                        >
-                          <div className="flex items-center">
-                            <div className="w-3 h-3 bg-gradient-to-r from-blue-400 to-cyan-400 rounded-full mr-4"></div>
-                            <span className="text-cyan-400 font-mono text-sm font-medium">{item.timestamp}</span>
-                          </div>
-                          {expandedTimeline.includes(index) ? (
-                            <ChevronUp className="w-5 h-5 text-gray-400" />
-                          ) : (
-                            <ChevronDown className="w-5 h-5 text-gray-400" />
+                {/* Timeline Summary - Only show for YouTube videos */}
+                {analysisData.timeline_summary && analysisData.timeline_summary.length > 0 && (
+                  <div className="mb-8">
+                    <h3 className="text-2xl font-semibold text-white mb-6 flex items-center">
+                      <Clock className="w-6 h-6 mr-3 text-cyan-400" />
+                      Timeline Summary
+                    </h3>
+                    <div className="space-y-4">
+                      {analysisData.timeline_summary.map((item, index) => (
+                        <div key={index} className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
+                          <button
+                            onClick={() => toggleTimeline(index)}
+                            className="w-full px-6 py-4 text-left flex items-center justify-between hover:bg-gray-750 transition-colors duration-200"
+                          >
+                            <div className="flex items-center">
+                              <div className="w-3 h-3 bg-gradient-to-r from-blue-400 to-cyan-400 rounded-full mr-4"></div>
+                              <span className="text-cyan-400 font-mono text-sm font-medium">{item.timestamp}</span>
+                            </div>
+                            {expandedTimeline.includes(index) ? (
+                              <ChevronUp className="w-5 h-5 text-gray-400" />
+                            ) : (
+                              <ChevronDown className="w-5 h-5 text-gray-400" />
+                            )}
+                          </button>
+                          {expandedTimeline.includes(index) && (
+                            <div className="px-6 pb-4">
+                              <p className="text-gray-300 leading-relaxed">{item.summary}</p>
+                            </div>
                           )}
-                        </button>
-                        {expandedTimeline.includes(index) && (
-                          <div className="px-6 pb-4">
-                            <p className="text-gray-300 leading-relaxed">{item.summary}</p>
-                          </div>
-                        )}
-                      </div>
-                    ))}
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
 
                 <button
                   onClick={handleBack}
@@ -285,11 +366,11 @@ const InputTabs: React.FC = () => {
                 </div>
               </div>
 
-              {/* Why is this video viral? */}
+              {/* Why is this content viral? */}
               <div className="bg-gray-800 rounded-2xl p-8 border border-gray-700 text-left">
                 <h3 className="text-2xl font-semibold text-white mb-6 flex items-center">
                   <span className="text-2xl mr-3">🔥</span>
-                  Why is this video viral?
+                  Why does this content have viral potential?
                 </h3>
                 <p className="text-gray-300 text-lg leading-relaxed">
                   {analysisData.viral_explanation}
@@ -307,12 +388,12 @@ const InputTabs: React.FC = () => {
               <div className="bg-gray-800 rounded-2xl p-8 border border-gray-700">
                 <div className="flex items-center mb-6">
                   <Zap className="w-8 h-8 text-yellow-400 mr-3" />
-                  <h3 className="text-2xl font-semibold text-white">Recommended Video Idea</h3>
+                  <h3 className="text-2xl font-semibold text-white">Recommended Content Idea</h3>
                 </div>
                 
                 <div className="grid md:grid-cols-2 gap-8">
                   <div>
-                    <h4 className="text-xl font-semibold text-cyan-400 mb-4">📹 Video Concept</h4>
+                    <h4 className="text-xl font-semibold text-cyan-400 mb-4">📹 Content Concept</h4>
                     <h5 className="text-lg font-medium text-white mb-3">
                       {analysisData.recommendations.title}
                     </h5>
@@ -448,18 +529,51 @@ const InputTabs: React.FC = () => {
             </button>
           </div>
         ) : (
-          <div className="border-2 border-dashed border-gray-600 rounded-xl p-8 sm:p-12 text-center hover:border-cyan-500 transition-all duration-300 cursor-pointer bg-gray-800/30">
-            <FileUp className="h-12 w-12 mx-auto mb-4 text-gray-400" />
-            <p className="text-gray-300 mb-2 text-lg">Drag files or click to upload</p>
-            <p className="text-gray-500 text-sm">(PDF, Word, PPT)</p>
-            <input type="file" className="hidden" multiple accept=".pdf,.doc,.docx,.ppt,.pptx" />
+          <div className="space-y-6">
+            {/* File Upload Area */}
+            <div className="border-2 border-dashed border-gray-600 rounded-xl p-8 sm:p-12 text-center hover:border-cyan-500 transition-all duration-300 cursor-pointer bg-gray-800/30 relative">
+              <input 
+                type="file" 
+                onChange={handleFileSelect}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" 
+                accept=".pdf,.doc,.docx,.ppt,.pptx,.txt"
+              />
+              <FileUp className="h-12 w-12 mx-auto mb-4 text-gray-400" />
+              <p className="text-gray-300 mb-2 text-lg">Drag files or click to upload</p>
+              <p className="text-gray-500 text-sm">(PDF, Word, PowerPoint, Text - Max 10MB)</p>
+            </div>
+
+            {/* Selected File Display */}
+            {selectedFile && (
+              <div className="bg-gray-800 rounded-xl p-4 border border-gray-700">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center">
+                    <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-cyan-500 rounded-lg flex items-center justify-center mr-3">
+                      <FileUp className="w-5 h-5 text-white" />
+                    </div>
+                    <div>
+                      <p className="text-white font-medium">{selectedFile.name}</p>
+                      <p className="text-gray-400 text-sm">{formatFileSize(selectedFile.size)}</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleRemoveFile}
+                    className="p-2 text-gray-400 hover:text-red-400 transition-colors duration-200"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Upload Button */}
             <button
               onClick={handleSubmit}
-              disabled={summaryState.isLoading}
-              className="mt-6 px-8 py-4 bg-gradient-to-r from-cyan-600 to-blue-600 text-white rounded-xl hover:from-cyan-700 hover:to-blue-700 transition-all duration-300 flex items-center justify-center mx-auto shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={summaryState.isLoading || !selectedFile}
+              className="w-full px-8 py-4 bg-gradient-to-r from-cyan-600 to-blue-600 text-white rounded-xl hover:from-cyan-700 hover:to-blue-700 transition-all duration-300 flex items-center justify-center shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <Sparkles className="h-5 w-5 mr-2" />
-              Start Analysis
+              <Upload className="h-5 w-5 mr-2" />
+              {selectedFile ? 'Analyze Document' : 'Select Document First'}
             </button>
           </div>
         )}
